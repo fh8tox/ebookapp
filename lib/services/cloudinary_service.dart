@@ -8,10 +8,10 @@ class CloudinaryService {
   final String cloudName = "ds5xbbjm3";
   final String uploadPreset = "ebookapp";
 
-  // ================= UPLOAD PDF =================
-  Future<String?> uploadPdf(dynamic file) async {
-    final url = Uri.parse(
-        "https://api.cloudinary.com/v1_1/$cloudName/raw/upload"); // 🔥 QUAN TRỌNG
+  // ================= UPLOAD EPUB =================
+  Future<String?> uploadEpub(dynamic file) async {
+    // EPUB và PDF đều dùng endpoint /raw/
+    final url = Uri.parse("https://api.cloudinary.com/v1_1/$cloudName/raw/upload");
 
     final request = http.MultipartRequest("POST", url);
     request.fields['upload_preset'] = uploadPreset;
@@ -25,31 +25,25 @@ class CloudinaryService {
         ));
       }
     } else {
+      // Xử lý cho Mobile (File) hoặc PlatformFile
       if (file is File) {
-        request.files.add(await http.MultipartFile.fromPath(
-          'file',
-          file.path,
-        ));
-      } else if (file is PlatformFile && file.bytes != null) {
-        request.files.add(http.MultipartFile.fromBytes(
-          'file',
-          file.bytes!,
-          filename: file.name,
-        ));
+        request.files.add(await http.MultipartFile.fromPath('file', file.path));
+      } else if (file is PlatformFile) {
+        if (file.bytes != null) {
+          request.files.add(http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name));
+        } else if (file.path != null) {
+          request.files.add(await http.MultipartFile.fromPath('file', file.path!));
+        }
       }
     }
 
     final response = await request.send();
-
     if (response.statusCode == 200) {
       final res = await http.Response.fromStream(response);
       final data = json.decode(res.body);
-
-      print("PDF URL: ${data['secure_url']}"); // debug
-
-      return data['secure_url']; // ✅ sẽ là raw/upload
+      return data['secure_url'];
     } else {
-      print("Upload PDF failed: ${response.statusCode}");
+      print("Upload EPUB failed: ${response.statusCode}");
       return null;
     }
   }

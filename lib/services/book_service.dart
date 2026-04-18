@@ -12,8 +12,9 @@ class BookService {
       'title': book.title,
       'author': book.author,
       'categoryId': book.categoryId,
-      'pdfUrl': book.pdfUrl,
-      'imageUrl': book.imageUrl, // ✅ thêm
+      'epubUrl': book.epubUrl, // Cập nhật field name
+      'imageUrl': book.imageUrl,
+      'createdAt': FieldValue.serverTimestamp(),
     });
   }
 

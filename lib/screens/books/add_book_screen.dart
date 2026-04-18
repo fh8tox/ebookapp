@@ -20,24 +20,23 @@ class _AddBookScreenState extends State<AddBookScreen> {
   final service = BookService();
   final cloudinary = CloudinaryService();
 
-  PlatformFile? pdfFile;
+  PlatformFile? epubFile; // Đã đổi từ pdfFile -> epubFile
   PlatformFile? imageFile;
 
   String? selectedCategory;
-
   bool loading = false;
 
-  // ================= PICK PDF =================
-  Future<void> pickPdf() async {
+  // ================= PICK EPUB =================
+  Future<void> pickEpub() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['pdf'],
+      allowedExtensions: ['epub'], // Chỉ lọc file epub
       withData: true,
     );
 
     if (result != null) {
       setState(() {
-        pdfFile = result.files.first;
+        epubFile = result.files.first;
       });
     }
   }
@@ -61,10 +60,10 @@ class _AddBookScreenState extends State<AddBookScreen> {
     if (titleController.text.isEmpty ||
         authorController.text.isEmpty ||
         selectedCategory == null ||
-        pdfFile == null ||
+        epubFile == null ||
         imageFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Nhập đầy đủ thông tin")),
+        const SnackBar(content: Text("Vui lòng nhập đầy đủ và chọn file EPUB")),
       );
       return;
     }
@@ -72,81 +71,69 @@ class _AddBookScreenState extends State<AddBookScreen> {
     setState(() => loading = true);
 
     try {
-      // 🔥 Upload riêng từng loại
-      final pdfUrl = await cloudinary.uploadPdf(pdfFile!);
+      // Gọi hàm upload Epub
+      final epubUrl = await cloudinary.uploadEpub(epubFile!);
       final imageUrl = await cloudinary.uploadImage(imageFile!);
 
-      if (pdfUrl == null || imageUrl == null) {
-        throw Exception("Upload thất bại");
+      if (epubUrl == null || imageUrl == null) {
+        throw Exception("Upload file lên Cloudinary thất bại");
       }
-
-      // 🔍 Debug cực quan trọng
-      print("PDF URL: $pdfUrl");
-      print("IMAGE URL: $imageUrl");
 
       final book = Book(
         id: '',
         title: titleController.text,
         author: authorController.text,
         categoryId: selectedCategory!,
-        pdfUrl: pdfUrl,
+        epubUrl: epubUrl, // Gán URL EPUB
         imageUrl: imageUrl,
       );
 
       await service.addBook(book);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Thêm sách thành công")),
-      );
-
-      Navigator.pop(context);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Thêm sách EPUB thành công")),
+        );
+        Navigator.pop(context);
+      }
     } catch (e) {
-      print("FULL ERROR: $e"); // Log này sẽ cho bạn biết chính xác lỗi ở đâu
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Lỗi: ${e.toString()}")), // Hiện lỗi lên màn hình
+        SnackBar(content: Text("Lỗi: ${e.toString()}")),
       );
+    } finally {
+      if (mounted) setState(() => loading = false);
     }
-
-    setState(() => loading = false);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Thêm sách")),
-      body: SingleChildScrollView( // 🔥 tránh tràn UI
+      appBar: AppBar(title: const Text("Thêm sách mới (EPUB)")),
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-
-            // ===== TITLE =====
             TextField(
               controller: titleController,
-              decoration: const InputDecoration(labelText: "Tên sách"),
+              decoration: const InputDecoration(labelText: "Tên sách", border: OutlineInputBorder()),
             ),
-
-            // ===== AUTHOR =====
+            const SizedBox(height: 15),
             TextField(
               controller: authorController,
-              decoration: const InputDecoration(labelText: "Tác giả"),
+              decoration: const InputDecoration(labelText: "Tác giả", border: OutlineInputBorder()),
             ),
+            const SizedBox(height: 15),
 
-            const SizedBox(height: 10),
-
-            // ===== CATEGORY =====
+            // ===== CATEGORY DROPDOWN =====
             StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('categories')
-                  .snapshots(),
+              stream: FirebaseFirestore.instance.collection('categories').snapshots(),
               builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const CircularProgressIndicator();
-                }
+                if (!snapshot.hasData) return const LinearProgressIndicator();
 
                 final categories = snapshot.data!.docs;
-
                 return DropdownButtonFormField<String>(
                   value: selectedCategory,
+                  decoration: const InputDecoration(labelText: "Thể loại", border: OutlineInputBorder()),
                   hint: const Text("Chọn thể loại"),
                   items: categories.map((doc) {
                     return DropdownMenuItem(
@@ -154,48 +141,72 @@ class _AddBookScreenState extends State<AddBookScreen> {
                       child: Text(doc['name']),
                     );
                   }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedCategory = value;
-                    });
-                  },
+                  onChanged: (value) => setState(() => selectedCategory = value),
                 );
               },
             ),
+            const SizedBox(height: 20),
 
-            const SizedBox(height: 10),
-
-            // ===== IMAGE =====
-            ElevatedButton(
-              onPressed: pickImage,
-              child: const Text("Chọn ảnh bìa"),
+            // ===== IMAGE PICKER =====
+            Row(
+              children: [
+                ElevatedButton.icon(
+                  onPressed: pickImage,
+                  icon: const Icon(Icons.image),
+                  label: const Text("Chọn ảnh bìa"),
+                ),
+                const SizedBox(width: 10),
+                if (imageFile != null) const Icon(Icons.check_circle, color: Colors.green),
+              ],
             ),
-
             if (imageFile != null)
-              Image.memory(
-                imageFile!.bytes!,
-                height: 120,
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Image.memory(imageFile!.bytes!, height: 150),
               ),
-
-            const SizedBox(height: 10),
-
-            // ===== PDF =====
-            ElevatedButton(
-              onPressed: pickPdf,
-              child: const Text("Chọn file PDF"),
-            ),
-
-            if (pdfFile != null)
-              Text("Đã chọn: ${pdfFile!.name}"),
 
             const SizedBox(height: 20),
 
-            // ===== UPLOAD =====
+            // ===== EPUB PICKER =====
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(10)
+              ),
+              child: Column(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: pickEpub,
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                    icon: const Icon(Icons.book, color: Colors.white),
+                    label: const Text("Chọn file EPUB", style: TextStyle(color: Colors.white)),
+                  ),
+                  if (epubFile != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text("Đã chọn: ${epubFile!.name}",
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                    ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 30),
+
+            // ===== SUBMIT BUTTON =====
             loading
                 ? const CircularProgressIndicator()
-                : ElevatedButton(
-              onPressed: upload,
-              child: const Text("Thêm sách"),
+                : SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: upload,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                child: const Text("LƯU SÁCH", style: TextStyle(fontSize: 18, color: Colors.white)),
+              ),
             ),
           ],
         ),

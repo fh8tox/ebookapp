@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // Thêm firestore để lấy category
 import '../../models/book.dart';
 import '../../services/book_service.dart';
 import 'add_book_screen.dart';
@@ -11,21 +12,21 @@ class BookScreen extends StatefulWidget {
   State<BookScreen> createState() => _BookScreenState();
 }
 
-class _BookScreenState extends State<BookScreen> {
+class _ScrollControllerState extends State<BookScreen> {
   final service = BookService();
-
   final ScrollController _scrollController = ScrollController();
 
   List<Book> books = [];
+  Map<String, String> categoryNames = {}; // Lưu trữ: { "id": "Tên thể loại" }
+
   bool isLoadingMore = false;
   bool hasMore = true;
-
   int limit = 10;
 
   @override
   void initState() {
     super.initState();
-    loadBooks();
+    initData();
 
     _scrollController.addListener(() {
       if (_scrollController.position.pixels ==
@@ -33,6 +34,28 @@ class _BookScreenState extends State<BookScreen> {
         loadMore();
       }
     });
+  }
+
+  // Khởi tạo cả category và danh sách sách
+  Future<void> initData() async {
+    await loadCategories();
+    await loadBooks();
+  }
+
+  // Lấy toàn bộ danh sách thể loại để map ID sang Name
+  Future<void> loadCategories() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection('categories').get();
+      final Map<String, String> tempMap = {};
+      for (var doc in snapshot.docs) {
+        tempMap[doc.id] = doc['name'] ?? 'Không xác định';
+      }
+      setState(() {
+        categoryNames = tempMap;
+      });
+    } catch (e) {
+      print("Lỗi tải thể loại: $e");
+    }
   }
 
   Future<void> loadBooks() async {
@@ -47,7 +70,6 @@ class _BookScreenState extends State<BookScreen> {
     if (isLoadingMore || !hasMore) return;
 
     setState(() => isLoadingMore = true);
-
     final data = await service.getBooksOnce(books.length + limit);
 
     setState(() {
@@ -74,7 +96,8 @@ class _BookScreenState extends State<BookScreen> {
               Navigator.pop(context);
               loadBooks();
             },
-            child: const Text("Xóa"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text("Xóa", style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -100,20 +123,22 @@ class _BookScreenState extends State<BookScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Quản lý sách")),
-
+      appBar: AppBar(
+        title: const Text("Quản lý sách"),
+        centerTitle: true,
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: goToAddScreen,
         child: const Icon(Icons.add),
       ),
-
-      body: GridView.builder(
+      body: books.isEmpty && !isLoadingMore
+          ? const Center(child: Text("Đang tải dữ liệu..."))
+          : GridView.builder(
         controller: _scrollController,
-        padding: const EdgeInsets.all(8),
-        gridDelegate:
-        const SliverGridDelegateWithFixedCrossAxisCount(
+        padding: const EdgeInsets.all(10),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          childAspectRatio: 0.65,
+          childAspectRatio: 0.62, // Tăng nhẹ để không bị tràn UI
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
         ),
@@ -124,16 +149,18 @@ class _BookScreenState extends State<BookScreen> {
           }
 
           final book = books[index];
+          // Lấy tên thể loại từ map, nếu không có thì hiện ID hoặc thông báo
+          final categoryName = categoryNames[book.categoryId] ?? "Đang tải...";
 
           return Card(
+            elevation: 4,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-
-                // 📷 ẢNH (KHÔNG CLICK ĐỌC NỮA)
+                // 📷 ẢNH
                 Expanded(
                   child: ClipRRect(
                     borderRadius: const BorderRadius.vertical(
@@ -145,13 +172,16 @@ class _BookScreenState extends State<BookScreen> {
                       width: double.infinity,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) =>
-                      const Icon(Icons.broken_image),
+                      const Center(child: Icon(Icons.broken_image)),
                     )
-                        : const Icon(Icons.book, size: 50),
+                        : Container(
+                      color: Colors.grey[200],
+                      child: const Icon(Icons.book, size: 50),
+                    ),
                   ),
                 ),
 
-                // 📄 INFO
+                // 📄 THÔNG TIN
                 Padding(
                   padding: const EdgeInsets.all(8),
                   child: Column(
@@ -161,37 +191,50 @@ class _BookScreenState extends State<BookScreen> {
                         book.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       Text(
                         book.author,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
                       ),
-                      Text(
-                        "Thể loại: ${book.categoryId}",
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
+                      const SizedBox(height: 4),
+                      // HIỂN THỊ TÊN THỂ LOẠI
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          categoryName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.blue,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ),
 
-                // ⚙️ ACTION (CHỈ EDIT + DELETE)
+                // ⚙️ HÀNH ĐỘNG
+                const Divider(height: 1),
                 Row(
-                  mainAxisAlignment:
-                  MainAxisAlignment.spaceBetween,
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.edit),
+                      icon: const Icon(Icons.edit, color: Colors.orange),
                       onPressed: () => goToEditScreen(book),
                     ),
+                    const SizedBox(height: 20, child: VerticalDivider()),
                     IconButton(
-                      icon: const Icon(Icons.delete),
-                      onPressed: () =>
-                          confirmDelete(book.id),
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () => confirmDelete(book.id),
                     ),
                   ],
                 ),
@@ -203,3 +246,6 @@ class _BookScreenState extends State<BookScreen> {
     );
   }
 }
+
+// Giữ lại tên Class ban đầu để tránh lỗi compiler
+class _BookScreenState extends _ScrollControllerState {}

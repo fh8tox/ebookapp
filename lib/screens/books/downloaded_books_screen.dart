@@ -31,7 +31,7 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
   ColorScheme get cs => Theme.of(context).colorScheme;
 
   // =========================
-  // LOAD
+  // LOAD LOCAL BOOKS (EPUB)
   // =========================
   Future<void> loadDownloadedBooks() async {
     setState(() => isLoading = true);
@@ -52,16 +52,17 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
           final data = jsonDecode(jsonContent);
 
           final bookId = data['id'];
-          final pdfPath = '${dir.path}/$bookId.pdf';
+          // 🔥 ĐỔI: Kiểm tra file .epub thay vì .pdf
+          final epubPath = '${dir.path}/$bookId.epub';
 
-          if (!await File(pdfPath).exists()) continue;
+          if (!await File(epubPath).exists()) continue;
 
           final isFavorite = await favoriteService.isFavorite(bookId);
 
           books.add({
             'id': bookId,
             'data': data,
-            'path': pdfPath,
+            'path': epubPath, // Đường dẫn đến file epub
             'isFavorite': isFavorite,
           });
         } catch (_) {}
@@ -82,25 +83,28 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
   }
 
   // =========================
-  // DELETE
+  // DELETE (EPUB)
   // =========================
   Future<void> deleteBook(Map<String, dynamic> bookInfo) async {
     final id = bookInfo['id'];
-    final pdfPath = bookInfo['path'];
+    final epubPath = bookInfo['path']; // Đã là .epub từ loadDownloadedBooks
     final dir = await downloader.getDir();
 
-    await File(pdfPath).delete().catchError((_) {});
+    // Xóa file sách, ảnh cover và file meta json
+    await File(epubPath).delete().catchError((_) {});
     await File('${dir.path}/$id.jpg').delete().catchError((_) {});
     await File('${dir.path}/$id.json').delete().catchError((_) {});
 
     await loadDownloadedBooks();
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text("Đã xóa sách"),
-        backgroundColor: cs.primary,
-      ),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text("Đã xóa sách khỏi thiết bị"),
+          backgroundColor: cs.primary,
+        ),
+      );
+    }
   }
 
   // =========================
@@ -111,6 +115,7 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
     final data = bookInfo['data'];
     final current = bookInfo['isFavorite'];
 
+    // Chú ý: Book.fromMap cần xử lý key 'epubUrl' thay vì 'pdfUrl'
     final book = Book.fromMap(data, id);
 
     if (current) {
@@ -125,7 +130,7 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
   }
 
   // =========================
-  // COVER
+  // COVER & UI HELPERS
   // =========================
   Widget buildCover(Map<String, dynamic> bookInfo) {
     final data = bookInfo['data'];
@@ -140,7 +145,6 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
         errorBuilder: (_, __, ___) => _placeholder(),
       );
     }
-
     return _placeholder();
   }
 
@@ -149,13 +153,10 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
       width: 60,
       height: 80,
       color: cs.surfaceContainerHighest,
-      child: Icon(Icons.menu_book, color: cs.primary),
+      child: Icon(Icons.book, color: cs.primary), // Đổi icon sang book
     );
   }
 
-  // =========================
-  // DELETE DIALOG
-  // =========================
   void showDeleteDialog(Map<String, dynamic> bookInfo) {
     final title = bookInfo['data']['title'];
 
@@ -164,7 +165,7 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
       builder: (_) => AlertDialog(
         backgroundColor: cs.surface,
         title: const Text("Xóa sách?"),
-        content: Text("Bạn có chắc muốn xóa \"$title\"?"),
+        content: Text("Bạn có chắc muốn xóa vĩnh viễn file EPUB của \"$title\"?"),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -175,9 +176,7 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
               Navigator.pop(context);
               deleteBook(bookInfo);
             },
-            style: TextButton.styleFrom(
-              foregroundColor: cs.error,
-            ),
+            style: TextButton.styleFrom(foregroundColor: cs.error),
             child: const Text("Xóa"),
           ),
         ],
@@ -192,13 +191,17 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: cs.surface,
-
       appBar: AppBar(
-        title: Text("Sách đã tải (${downloadedBooks.length})"),
+        title: Text("Thư viện Offline (${downloadedBooks.length})"),
         backgroundColor: cs.surface,
         elevation: 0,
+        actions: [
+          IconButton(
+            onPressed: loadDownloadedBooks,
+            icon: const Icon(Icons.refresh),
+          )
+        ],
       ),
-
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : downloadedBooks.isEmpty
@@ -206,15 +209,14 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.download_done,
-                size: 80, color: cs.onSurfaceVariant),
+            Icon(Icons.cloud_off, size: 80, color: cs.onSurfaceVariant),
             const SizedBox(height: 12),
             Text(
-              "Chưa có sách nào",
-              style: TextStyle(color: cs.onSurface),
+              "Không tìm thấy sách offline",
+              style: TextStyle(color: cs.onSurface, fontSize: 16),
             ),
             Text(
-              "Tải sách từ tab Tìm kiếm",
+              "Sách bạn tải về sẽ xuất hiện ở đây",
               style: TextStyle(color: cs.onSurfaceVariant),
             ),
           ],
@@ -243,7 +245,7 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
                     context,
                     MaterialPageRoute(
                       builder: (_) => ReadLocalBookScreen(
-                        path: bookInfo['path'],
+                        path: bookInfo['path'], // Path đến file .epub
                       ),
                     ),
                   );
@@ -256,54 +258,56 @@ class _DownloadedBooksScreenState extends State<DownloadedBooksScreen> {
                         borderRadius: BorderRadius.circular(8),
                         child: buildCover(bookInfo),
                       ),
-
                       const SizedBox(width: 12),
-
                       Expanded(
                         child: Column(
-                          crossAxisAlignment:
-                          CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              data['title'] ?? '',
+                              data['title'] ?? 'Không rõ tiêu đề',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: cs.onSurface,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                             Text(
-                              data['author'] ?? '',
-                              style:
-                              TextStyle(color: cs.onSurfaceVariant),
+                              data['author'] ?? 'Không rõ tác giả',
+                              style: TextStyle(color: cs.onSurfaceVariant),
                             ),
-                            Text(
-                              "Đã tải",
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: cs.onSurfaceVariant,
+                            const SizedBox(height: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: cs.primary.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                "EPUB",
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: cs.primary,
+                                ),
                               ),
                             ),
                           ],
                         ),
                       ),
-
                       Column(
                         children: [
                           IconButton(
                             icon: Icon(
-                              isFav
-                                  ? Icons.favorite
-                                  : Icons.favorite_border,
+                              isFav ? Icons.favorite : Icons.favorite_border,
                               color: isFav ? cs.error : cs.onSurfaceVariant,
                             ),
-                            onPressed: () =>
-                                toggleFavorite(bookInfo),
+                            onPressed: () => toggleFavorite(bookInfo),
                           ),
                           IconButton(
-                            icon: Icon(Icons.delete,
-                                color: cs.error),
-                            onPressed: () =>
-                                showDeleteDialog(bookInfo),
+                            icon: Icon(Icons.delete_outline, color: cs.error),
+                            onPressed: () => showDeleteDialog(bookInfo),
                           ),
                         ],
                       )

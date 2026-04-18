@@ -23,7 +23,6 @@ class _SearchScreenState extends State<SearchScreen> {
   final Map<String, bool> downloadCache = {};
 
   Directory? _appDir;
-
   String keyword = "";
 
   @override
@@ -44,9 +43,9 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   // =========================
-  // PATH
+  // PATH (Chuyển sang EPUB)
   // =========================
-  String _pdfPath(Book book) => '${_appDir?.path ?? ''}/${book.id}.pdf';
+  String _epubPath(Book book) => '${_appDir?.path ?? ''}/${book.id}.epub';
   String _imgPath(Book book) => '${_appDir?.path ?? ''}/${book.id}.jpg';
 
   Future<bool> isDownloaded(Book book) async {
@@ -56,7 +55,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
     if (_appDir == null) return false;
 
-    final exists = await File(_pdfPath(book)).exists();
+    // Kiểm tra file .epub tồn tại
+    final exists = await File(_epubPath(book)).exists();
     downloadCache[book.id] = exists;
     return exists;
   }
@@ -68,12 +68,15 @@ class _SearchScreenState extends State<SearchScreen> {
     final isFav = await favoriteService.isFavorite(book.id);
 
     if (isFav) {
-      await favoriteService.removeFavorite(book.id);
+      await serviceRemove(book.id);
     } else {
       await favoriteService.addFavorite(book);
     }
+    if (mounted) setState(() {});
+  }
 
-    setState(() {});
+  Future<void> serviceRemove(String id) async {
+    await favoriteService.removeFavorite(id);
   }
 
   // =========================
@@ -87,33 +90,37 @@ class _SearchScreenState extends State<SearchScreen> {
       progressMap[book.id] = 0.0;
     });
 
-    downloader.progressStream(book.id).listen((p) {
+    // Lắng nghe tiến trình từ stream của DownloadService
+    final subscription = downloader.progressStream(book.id).listen((p) {
       if (mounted) setState(() => progressMap[book.id] = p);
     });
 
     try {
       await downloader.downloadBook(book);
 
+      subscription.cancel();
       setState(() {
         downloadingMap[book.id] = false;
         progressMap.remove(book.id);
         downloadCache[book.id] = true;
       });
 
-      _snack("Tải thành công!");
-    } catch (_) {
+      _snack("Tải file EPUB thành công!");
+    } catch (e) {
+      subscription.cancel();
       setState(() {
         downloadingMap[book.id] = false;
         progressMap.remove(book.id);
       });
-
       _snack("Tải thất bại!");
     }
   }
 
   Future<void> deleteDownload(Book book) async {
-    await File(_pdfPath(book)).delete().catchError((_) {});
+    await File(_epubPath(book)).delete().catchError((_) {});
     await File(_imgPath(book)).delete().catchError((_) {});
+    // Xóa cả file json meta nếu có
+    await File('${_appDir?.path ?? ''}/${book.id}.json').delete().catchError((_) {});
 
     setState(() {
       downloadCache[book.id] = false;
@@ -121,18 +128,16 @@ class _SearchScreenState extends State<SearchScreen> {
       downloadingMap.remove(book.id);
     });
 
-    _snack("Đã xóa file!");
+    _snack("Đã xóa file EPUB!");
   }
 
   void _snack(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg)),
     );
   }
 
-  // =========================
-  // THEME HELPERS
-  // =========================
   ColorScheme get cs => Theme.of(context).colorScheme;
 
   // =========================
@@ -143,13 +148,16 @@ class _SearchScreenState extends State<SearchScreen> {
       future: isDownloaded(book),
       builder: (context, snap) {
         if (snap.data == true) {
-          return Image.file(
-            File(_imgPath(book)),
-            width: 60,
-            height: 80,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _coverNet(book),
-          );
+          final localImage = File(_imgPath(book));
+          if (localImage.existsSync()) {
+            return Image.file(
+              localImage,
+              width: 60,
+              height: 80,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _coverNet(book),
+            );
+          }
         }
         return _coverNet(book);
       },
@@ -166,7 +174,7 @@ class _SearchScreenState extends State<SearchScreen> {
         width: 60,
         height: 80,
         color: cs.surfaceContainerHighest,
-        child: Icon(Icons.menu_book, color: cs.primary),
+        child: Icon(Icons.book, color: cs.primary),
       ),
     );
   }
@@ -186,10 +194,12 @@ class _SearchScreenState extends State<SearchScreen> {
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            FutureBuilder<bool>(
-              future: favoriteService.isFavorite(book.id),
-              builder: (context, fav) {
-                final isFav = fav.data ?? false;
+            // Favorite Button
+            StreamBuilder<QuerySnapshot>(
+              stream: favoriteService.getFavorites(),
+              builder: (context, favSnap) {
+                final isFav = favSnap.hasData &&
+                    favSnap.data!.docs.any((d) => d.id == book.id);
 
                 return IconButton(
                   icon: Icon(
@@ -203,7 +213,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
             if (downloaded)
               IconButton(
-                icon: Icon(Icons.delete_outline, color: cs.error),
+                icon: Icon(Icons.delete_sweep_outlined, color: cs.error),
                 onPressed: () => deleteDownload(book),
               )
             else if (isDownloading)
@@ -213,15 +223,15 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
-                    CircularProgressIndicator(value: progress),
+                    CircularProgressIndicator(value: progress, strokeWidth: 3),
                     Text("${(progress * 100).toInt()}%",
-                        style: TextStyle(fontSize: 10, color: cs.onSurface)),
+                        style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: cs.onSurface)),
                   ],
                 ),
               )
             else
               IconButton(
-                icon: Icon(Icons.download, color: cs.primary),
+                icon: Icon(Icons.cloud_download_outlined, color: cs.primary),
                 onPressed: () => downloadBook(book),
               ),
           ],
@@ -230,47 +240,38 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  // =========================
-  // UI
-  // =========================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: cs.surface,
-
       appBar: AppBar(
-        title: const Text("Tìm sách"),
+        title: const Text("Tìm kiếm sách"),
         backgroundColor: cs.surface,
         elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              _searchController.clear();
-              setState(() => keyword = "");
-            },
-          )
-        ],
+        centerTitle: true,
       ),
-
       body: Column(
         children: [
           // SEARCH BAR
-          Container(
-            margin: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: cs.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: TextField(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: SearchBar(
               controller: _searchController,
-              style: TextStyle(color: cs.onSurface),
-              decoration: InputDecoration(
-                hintText: "Tìm sách...",
-                prefixIcon: Icon(Icons.search, color: cs.onSurfaceVariant),
-                border: InputBorder.none,
-              ),
+              hintText: "Tên sách hoặc tác giả...",
+              leading: const Icon(Icons.search),
+              trailing: [
+                if (_searchController.text.isNotEmpty)
+                  IconButton(
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() => keyword = "");
+                    },
+                    icon: const Icon(Icons.close),
+                  )
+              ],
               onChanged: (v) => setState(() => keyword = v.toLowerCase()),
+              elevation: WidgetStateProperty.all(0),
+              backgroundColor: WidgetStateProperty.all(cs.surfaceContainerHighest),
             ),
           ),
 
@@ -280,17 +281,17 @@ class _SearchScreenState extends State<SearchScreen> {
                   .collection('books')
                   .orderBy('title')
                   .snapshots(),
-
               builder: (context, snapshot) {
-                if (!snapshot.hasData) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(child: Text("Không có dữ liệu sách"));
+                }
+
                 final books = snapshot.data!.docs
-                    .map((e) => Book.fromMap(
-                  e.data() as Map<String, dynamic>,
-                  e.id,
-                ))
+                    .map((e) => Book.fromMap(e.data() as Map<String, dynamic>, e.id))
                     .where((b) =>
                 b.title.toLowerCase().contains(keyword) ||
                     b.author.toLowerCase().contains(keyword))
@@ -299,9 +300,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 if (books.isEmpty) {
                   return Center(
                     child: Text(
-                      keyword.isEmpty
-                          ? "Khám phá sách"
-                          : "Không tìm thấy",
+                      keyword.isEmpty ? "Bắt đầu khám phá sách hay" : "Không tìm thấy kết quả",
                       style: TextStyle(color: cs.onSurfaceVariant),
                     ),
                   );
@@ -310,10 +309,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 return ListView.builder(
                   padding: const EdgeInsets.all(12),
                   itemCount: books.length,
-                  itemBuilder: (_, i) {
-                    final book = books[i];
-                    return _bookCard(book);
-                  },
+                  itemBuilder: (_, i) => _bookCard(books[i]),
                 );
               },
             ),
@@ -327,39 +323,34 @@ class _SearchScreenState extends State<SearchScreen> {
     return Card(
       color: cs.surfaceContainerHighest,
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(8),
               child: buildBookCover(book),
             ),
-
             const SizedBox(width: 12),
-
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     book.title,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: cs.onSurface,
-                    ),
+                    style: TextStyle(fontWeight: FontWeight.bold, color: cs.onSurface),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   Text(
                     book.author,
-                    style: TextStyle(color: cs.onSurfaceVariant),
+                    style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
                   ),
                 ],
               ),
             ),
-
             buildActions(book),
           ],
         ),

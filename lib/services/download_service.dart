@@ -13,10 +13,9 @@ class DownloadService {
     return await getApplicationDocumentsDirectory();
   }
 
-
-  // ✅ SỬA: Không thay đổi ID, dùng nguyên book.id làm filename
+  // File name dùng ID gốc của sách
   String _fileName(String id) {
-    return id; // Giữ nguyên ID gốc
+    return id;
   }
 
   // =========================
@@ -43,46 +42,56 @@ class DownloadService {
         Function(double progress)? onProgress,
       }) async {
     final bookId = book.id;
+
+    // Đảm bảo controller tồn tại để báo progress
+    if (!_progressControllers.containsKey(bookId)) {
+      _progressControllers[bookId] = StreamController<double>.broadcast();
+    }
     final controller = _progressControllers[bookId];
 
     final dir = await getDir();
-    final fileName = _fileName(bookId); // ✅ Giờ fileName = book.id chính xác
+    final fileName = _fileName(bookId);
 
-    final pdfPath = '${dir.path}/$fileName.pdf';
+    // Đổi đuôi file sang .epub
+    final epubPath = '${dir.path}/$fileName.epub';
     final imagePath = '${dir.path}/$fileName.jpg';
     final metaPath = '${dir.path}/$fileName.json';
 
-    final pdfFile = File(pdfPath);
+    final epubFile = File(epubPath);
     final imageFile = File(imagePath);
     final metaFile = File(metaPath);
 
     try {
-      // ================= PDF DOWNLOAD WITH PROGRESS =================
-      if (!await pdfFile.exists()) {
-        final request = await http.Client().send(
-          http.Request('GET', Uri.parse(book.pdfUrl)),
-        );
+      // ================= EPUB DOWNLOAD WITH PROGRESS =================
+      if (!await epubFile.exists()) {
+        final client = http.Client();
+        final request = http.Request('GET', Uri.parse(book.epubUrl)); // Dùng epubUrl
+        final response = await client.send(request);
 
-        final totalBytes = request.contentLength ?? 0;
+        final totalBytes = response.contentLength ?? 0;
         int received = 0;
-        final bytes = <int>[];
 
-        await for (var chunk in request.stream) {
-          bytes.addAll(chunk);
+        // Sử dụng IOSink để ghi file trực tiếp, tiết kiệm RAM
+        final sink = epubFile.openWrite();
+
+        await for (var chunk in response.stream) {
+          sink.add(chunk);
           received += chunk.length;
 
           final progress = totalBytes > 0 ? received / totalBytes : 0.0;
 
-          // Update stream
+          // Update stream và callback
           controller?.add(progress);
-          // Update callback
           onProgress?.call(progress);
         }
 
-        await pdfFile.writeAsBytes(bytes);
+        await sink.close();
+        client.close();
+
         controller?.add(1.0);
         onProgress?.call(1.0);
       } else {
+        // Nếu file đã tồn tại, báo progress hoàn tất ngay
         controller?.add(1.0);
         onProgress?.call(1.0);
       }
@@ -94,28 +103,34 @@ class DownloadService {
           if (res.statusCode == 200) {
             await imageFile.writeAsBytes(res.bodyBytes);
           }
-        } catch (_) {}
+        } catch (e) {
+          print("Download image error: $e");
+        }
       }
 
-      // ================= META =================
+      // ================= META (Lưu thông tin sách để dùng offline) =================
       if (!await metaFile.exists()) {
         final data = {
-          "id": book.id,        // ✅ Lưu đúng book.id gốc
+          "id": book.id,
           "title": book.title,
           "author": book.author,
           "imageUrl": book.imageUrl,
-          "pdfUrl": book.pdfUrl,
+          "epubUrl": book.epubUrl, // Lưu epubUrl thay vì pdfUrl
         };
 
         await metaFile.writeAsString(jsonEncode(data));
       }
 
       return {
-        "pdfPath": pdfPath,
+        "epubPath": epubPath,
         "imagePath": imagePath,
         "metaPath": metaPath,
       };
+    } catch (e) {
+      print("Download error: $e");
+      rethrow;
     } finally {
+      // Đợi một chút rồi mới đóng stream để UI kịp cập nhật trạng thái hoàn tất
       Future.delayed(const Duration(seconds: 2), () {
         _cleanup(bookId);
       });

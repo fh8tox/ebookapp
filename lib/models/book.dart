@@ -3,7 +3,7 @@ class Book {
   String title;
   String author;
   String categoryId;
-  String pdfUrl;
+  String epubUrl; // Đã đổi tên
   String imageUrl;
 
   Book({
@@ -11,7 +11,7 @@ class Book {
     required this.title,
     required this.author,
     required this.categoryId,
-    required this.pdfUrl,
+    required this.epubUrl,
     required this.imageUrl,
   });
 
@@ -20,7 +20,7 @@ class Book {
       'title': title,
       'author': author,
       'categoryId': categoryId,
-      'pdfUrl': pdfUrl,
+      'epubUrl': epubUrl,
       'imageUrl': imageUrl,
     };
   }
@@ -31,7 +31,7 @@ class Book {
       title: map['title'] ?? '',
       author: map['author'] ?? '',
       categoryId: map['categoryId'] ?? '',
-      pdfUrl: map['pdfUrl'] ?? '',
+      epubUrl: map['epubUrl'] ?? '',
       imageUrl: map['imageUrl'] ?? '',
     );
   }

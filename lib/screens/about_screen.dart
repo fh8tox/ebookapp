@@ -37,7 +37,7 @@ class AboutScreen extends StatelessWidget {
             const SizedBox(height: 10),
 
             Text(
-              "EBook App",
+              "Mind Book",
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
