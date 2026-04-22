@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_provider.dart';
 import '../screens/home/user_home.dart';
 import '../screens/home/admin_home.dart';
+import '../screens/forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -117,6 +118,15 @@ class _LoginScreenState extends State<LoginScreen> {
                       TextButton(
                         onPressed: () => Navigator.pushNamed(context, '/register'),
                         child: const Text("Chưa có tài khoản? Đăng ký ngay"),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const ForgotPasswordScreen()),
+                          );
+                        },
+                        child: const Text("Quên mật khẩu?"),
                       )
                     ],
                   ),
