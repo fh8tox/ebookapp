@@ -6,7 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/book.dart';
 import '../../services/download_service.dart';
 import '../../services/favorite_service.dart';
-import 'read_local_book_screen.dart'; // Đảm bảo screen này hỗ trợ đọc EPUB
+import 'read_local_book_screen.dart';
 
 class FavoriteBooksScreen extends StatefulWidget {
   const FavoriteBooksScreen({super.key});
@@ -24,11 +24,6 @@ class _FavoriteBooksScreenState extends State<FavoriteBooksScreen> {
   final Map<String, Map<String, dynamic>> localMap = {};
   final Set<String> downloadedIds = {};
 
-  final Map<String, double> progressMap = {};
-  final Set<String> downloading = {};
-
-  Map<String, Book> firebaseCache = {};
-
   bool _loadingLocal = true;
 
   @override
@@ -38,23 +33,15 @@ class _FavoriteBooksScreenState extends State<FavoriteBooksScreen> {
   }
 
   Future<void> init() async {
-    await _initAppDir();
+    _appDir = await downloader.getDir();
     await loadLocalBooks();
   }
 
-  Future<void> _initAppDir() async {
-    _appDir = await downloader.getDir();
-  }
-
-  // =========================
-  // LOAD LOCAL BOOKS (EPUB)
-  // =========================
   Future<void> loadLocalBooks() async {
     if (_appDir == null) return;
 
     setState(() => _loadingLocal = true);
 
-    // Tìm các file .json (metadata) để lấy thông tin sách
     final files = _appDir!
         .listSync()
         .where((f) => f.path.endsWith('.json'))
@@ -65,11 +52,8 @@ class _FavoriteBooksScreenState extends State<FavoriteBooksScreen> {
 
     for (var file in files) {
       try {
-        final data = jsonDecode(await File(file.path).readAsString())
-        as Map<String, dynamic>;
-
+        final data = jsonDecode(await File(file.path).readAsString());
         final id = data['id'];
-        // 🔥 KIỂM TRA FILE .epub thay vì .pdf
         final epubPath = '${_appDir!.path}/$id.epub';
 
         if (await File(epubPath).exists()) {
@@ -82,90 +66,6 @@ class _FavoriteBooksScreenState extends State<FavoriteBooksScreen> {
     if (mounted) setState(() => _loadingLocal = false);
   }
 
-  // =========================
-  // DOWNLOAD
-  // =========================
-  Future<void> download(Book book) async {
-    try {
-      if (_appDir == null) {
-        _appDir = await downloader.getDir();
-      }
-
-      setState(() {
-        downloading.add(book.id);
-        progressMap[book.id] = 0.0;
-      });
-
-      final stream = downloader.progressStream(book.id);
-
-      final sub = stream.listen((p) {
-        if (!mounted) return;
-        setState(() => progressMap[book.id] = p);
-      });
-
-      await downloader.downloadBook(book);
-
-      await sub.cancel();
-
-      setState(() {
-        downloading.remove(book.id);
-        progressMap.remove(book.id);
-      });
-
-      await loadLocalBooks(); // Refresh lại danh sách đã tải
-
-      _snack("Tải sách thành công!");
-    } catch (e) {
-      setState(() {
-        downloading.remove(book.id);
-        progressMap.remove(book.id);
-      });
-      _snack("Tải thất bại: $e");
-    }
-  }
-
-  // =========================
-  // FAVORITE
-  // =========================
-  Future<void> toggleFavorite(Book book) async {
-    final isFav = await service.isFavorite(book.id);
-
-    if (isFav) {
-      await service.removeFavorite(book.id);
-    } else {
-      await service.addFavorite(book);
-    }
-    // Không cần setState ở đây nếu dùng StreamBuilder bên dưới
-  }
-
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg)),
-    );
-  }
-
-  // =========================
-  // OPEN LOCAL BOOK (EPUB)
-  // =========================
-  Future<void> openBook(String id) async {
-    final path = '${_appDir!.path}/$id.epub'; // Đổi đuôi file
-
-    if (await File(path).exists()) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ReadLocalBookScreen(path: path), // Truyền path .epub
-        ),
-      );
-    } else {
-      _snack("File không tồn tại, vui lòng tải lại.");
-    }
-  }
-
-  // =========================
-  // MERGE LOCAL + FIREBASE
-  // =========================
   Book merge(Book book) {
     final local = localMap[book.id];
     if (local == null) return book;
@@ -175,169 +75,189 @@ class _FavoriteBooksScreenState extends State<FavoriteBooksScreen> {
       title: local['title'] ?? book.title,
       author: local['author'] ?? book.author,
       imageUrl: local['imageUrl'] ?? book.imageUrl,
-      epubUrl: book.epubUrl, // Đồng nhất với epubUrl
+      epubUrl: book.epubUrl,
       categoryId: book.categoryId,
     );
   }
 
-  // ... (Các hàm _cover và _placeholder giữ nguyên) ...
-  Widget _cover(Book book) {
-    if (book.imageUrl.isNotEmpty) {
-      return Image.network(
-        book.imageUrl,
-        width: 70,
-        height: 100,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _placeholder(),
-      );
-    }
-    return _placeholder();
-  }
+  Future<void> openBook(String id) async {
+    final path = '${_appDir!.path}/$id.epub';
 
-  Widget _placeholder() {
-    return Container(
-      width: 70,
-      height: 100,
-      color: Colors.grey[200],
-      child: const Icon(Icons.book_online, color: Colors.blue),
-    );
-  }
-
-  // =========================
-  // CARD
-  // =========================
-  Widget buildBookCard(Book book) {
-    final b = merge(book);
-
-    final isDownloaded = downloadedIds.contains(b.id);
-    final isDownloading = downloading.contains(b.id);
-    final progress = progressMap[b.id] ?? 0.0;
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      child: InkWell(
-        onTap: isDownloaded ? () => openBook(b.id) : null,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: _cover(b),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      b.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(b.author, style: TextStyle(color: Colors.grey[700])),
-                    const SizedBox(height: 8),
-                    Text(
-                      isDownloaded
-                          ? "Đã lưu máy (EPUB)"
-                          : (isDownloading ? "Đang tải EPUB..." : "Chưa tải về"),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: isDownloaded ? Colors.green : (isDownloading ? Colors.orange : Colors.grey),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  isDownloaded
-                      ? const Icon(Icons.check_circle, color: Colors.green)
-                      : isDownloading
-                      ? SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(value: progress, strokeWidth: 3),
-                  )
-                      : IconButton(
-                    icon: const Icon(Icons.cloud_download_outlined, color: Colors.blue),
-                    onPressed: () => download(b),
-                  ),
-                  StreamBuilder<QuerySnapshot>(
-                    stream: service.getFavorites(),
-                    builder: (context, snapshot) {
-                      final isFav = snapshot.hasData &&
-                          snapshot.data!.docs.any((d) => d.id == b.id);
-
-                      return IconButton(
-                        icon: Icon(
-                          isFav ? Icons.favorite : Icons.favorite_border,
-                          color: isFav ? Colors.red : null,
-                        ),
-                        onPressed: () => toggleFavorite(b),
-                      );
-                    },
-                  ),
-                ],
-              )
-            ],
-          ),
+    if (await File(path).exists()) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ReadLocalBookScreen(path: path),
         ),
-      ),
-    );
+      );
+    } else {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("File không tồn tại")));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text("❤️ Yêu thích (${firebaseCache.length})"),
-        centerTitle: true,
-      ),
+      appBar: AppBar(centerTitle: true, title: const Text("❤️ Yêu thích")),
       body: StreamBuilder<QuerySnapshot>(
         stream: service.getFavorites(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting || _loadingLocal) {
+          if (!snapshot.hasData || _loadingLocal) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(
-              child: Text("Danh sách yêu thích trống"),
-            );
+          final books = snapshot.data!.docs
+              .map((d) => Book.fromMap(
+            d.data() as Map<String, dynamic>,
+            d.id,
+          ))
+              .toList();
+
+          if (books.isEmpty) {
+            return const Center(child: Text("Danh sách yêu thích trống"));
           }
-
-          final books = snapshot.data!.docs.map((d) {
-            return Book.fromMap(
-              d.data() as Map<String, dynamic>,
-              d.id,
-            );
-          }).toList();
-
-          // Cập nhật cache để đếm số lượng trên AppBar
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (firebaseCache.length != books.length) {
-              setState(() {
-                firebaseCache = {for (var b in books) b.id: b};
-              });
-            }
-          });
 
           return RefreshIndicator(
             onRefresh: loadLocalBooks,
             child: ListView.builder(
               padding: const EdgeInsets.all(12),
               itemCount: books.length,
-              itemBuilder: (_, i) => buildBookCard(books[i]),
+              itemBuilder: (_, i) => BookItem(
+                book: merge(books[i]),
+                isDownloaded: downloadedIds.contains(books[i].id),
+                downloader: downloader,
+                service: service,
+                appDir: _appDir!,
+                onReload: loadLocalBooks,
+                onOpen: openBook,
+              ),
             ),
           );
         },
       ),
     );
+  }
+}
+
+class BookItem extends StatefulWidget {
+  final Book book;
+  final bool isDownloaded;
+  final DownloadService downloader;
+  final FavoriteService service;
+  final Directory appDir;
+  final VoidCallback onReload;
+  final Function(String) onOpen;
+
+  const BookItem({
+    super.key,
+    required this.book,
+    required this.isDownloaded,
+    required this.downloader,
+    required this.service,
+    required this.appDir,
+    required this.onReload,
+    required this.onOpen,
+  });
+
+  @override
+  State<BookItem> createState() => _BookItemState();
+}
+
+class _BookItemState extends State<BookItem> {
+  bool isDownloading = false;
+  double progress = 0;
+  bool isFav = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initFav();
+  }
+
+  Future<void> _initFav() async {
+    isFav = await widget.service.isFavorite(widget.book.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> toggleFav() async {
+    if (isFav) {
+      await widget.service.removeFavorite(widget.book.id);
+    } else {
+      await widget.service.addFavorite(widget.book);
+    }
+    setState(() => isFav = !isFav);
+  }
+
+  Future<void> download() async {
+    if (isDownloading) return;
+
+    setState(() {
+      isDownloading = true;
+      progress = 0;
+    });
+
+    final sub = widget.downloader
+        .progressStream(widget.book.id)
+        .listen((p) {
+      if ((p - progress).abs() > 0.05) {
+        setState(() => progress = p);
+      }
+    });
+
+    try {
+      await widget.downloader.downloadBook(widget.book);
+      await sub.cancel();
+      widget.onReload();
+      setState(() => isDownloading = false);
+    } catch (_) {
+      await sub.cancel();
+      setState(() => isDownloading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        onTap: widget.isDownloaded ? () => widget.onOpen(widget.book.id) : null,
+        leading: _cover(),
+        title: Text(widget.book.title,
+            maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(widget.book.author),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(isFav ? Icons.favorite : Icons.favorite_border,
+                  color: isFav ? Colors.red : null),
+              onPressed: toggleFav,
+            ),
+            if (widget.isDownloaded)
+              const Icon(Icons.check_circle, color: Colors.green)
+            else if (isDownloading)
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(value: progress),
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.download),
+                onPressed: download,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cover() {
+    final file = File('${widget.appDir.path}/${widget.book.id}.jpg');
+    if (file.existsSync()) {
+      return Image.file(file, width: 50, fit: BoxFit.cover);
+    }
+    return Image.network(widget.book.imageUrl, width: 50);
   }
 }
